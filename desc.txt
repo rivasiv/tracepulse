@@ -1,0 +1,90 @@
+[tracepulse]
+
+
+we need:
+---------
+- starting callback			- \/
+- perpacket callback			- \/
+- stopping callback			- \/
+
+- starting cb for reporting thread 	- \/
+
+The reporter thread receives all of the results published by the processing threads
+
+
+things to solve:
+--------
+- in packet cb do we need to copy or somehow pass packet to reporter thread?
+- in stop cb should we use RESULT_USER or RESULT_PACKET?
+- do we need to call trace_publish_result(trace, t, 0, gen, RESULT_PACKET); from every packet 
+callback
+
+WORKING MECHANISM:
+-----------
+- start callbacks for processing threads and for reporter thread allocate some internal
+storage with malloc and return pointer to that storage.
+
+
+
+setting callbacks:
+-------
+libtrace_callback_set_t *pktcbs, *rescbs;
+
+        pktcbs = trace_create_callback_set();
+        rescbs = trace_create_callback_set();
+
+        trace_set_packet_cb(pktcbs, fn_packet);
+        trace_set_starting_cb(pktcbs, fn_starting);
+        trace_set_stopping_cb(pktcbs, fn_stopping);
+        trace_set_starting_cb(rescbs, fn_starting);
+        trace_set_result_cb(rescbs, fn_result);
+        trace_set_stopping_cb(rescbs, fn_print_results);
+
+	trace_pstart(trace, NULL, pktcbs, rescbs)
+
+
+
+PER PACKET:
+-----------------
+We need to write packet, so it will be redirected to odp/accelio/kafka/file/whatever.
+
+
+        if (trace_write_packet(output, *packet)==-1) {
+                trace_perror_output(output,"write_packet");
+                return -1;
+        }
+
+
+
+OUTPUT:
+--------------
+Нам нужно в итоге все пакеты сохранять в файл.
+
+
+                output=trace_create_output(buffer);
+                if (trace_is_err_output(output)) {
+                        trace_perror_output(output,"%s",buffer);
+                        free(buffer);
+                        return -1;
+                }
+                if (compress_level!=-1) {
+                        if (trace_config_output(output,
+                                                TRACE_OPTION_OUTPUT_COMPRESS,
+                                                &compress_level)==-1) {
+                                trace_perror_output(output,"Unable to set compression level");
+                        }
+                }
+
+                if (trace_config_output(output,
+                                        TRACE_OPTION_OUTPUT_COMPRESSTYPE,
+                                        &compress_type) == -1) {
+                        trace_perror_output(output, "Unable to set compression type");
+                }
+
+                trace_start_output(output);
+                if (trace_is_err_output(output)) {
+                        trace_perror_output(output,"%s",buffer);
+                        free(buffer);
+                        return -1;
+                }
+
