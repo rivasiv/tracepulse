@@ -1,4 +1,5 @@
 //gcc main.c -o tracepulse -ltrace && ./tracepulse
+//gcc main.c -o tracepulse -ltrace && sudo ./tracepulse 4
 
 //combiner: we use combiner_ordered. so output data stored in ordered way.
 //	    there are 3 combiner types: ordered, unordered, sorted.
@@ -9,8 +10,17 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <libtrace.h>
-#include "libtrace_parallel.h"	//resides just in /usr/local/include
+#include <libtrace_parallel.h>	//resides just in /usr/local/include
+
+#define DEBUG
+
+#ifdef DEBUG
+ #define debug(x...) printf(x)
+#else
+ #define debug(x...)
+#endif
+
+typedef struct libtrace_thread_t libtrace_thread_t;
 
 //local storage for each processing thread. should be allocated for every thread
 struct t_store
@@ -54,7 +64,7 @@ static void stop_cb(libtrace_t *trace, libtrace_thread_t *thread, void *global, 
 	//could be needed RESULT_PACKET
 	//Inside it calls:
 	//libtrace->combiner.publish(libtrace, t->perpkt_num, &libtrace->combiner, &res);
-	trace_publish_result(trace, t, 0, gen, RESULT_USER);
+	//trace_publish_result(trace, thread, 0, gen, RESULT_USER);
 }
 
 // the packet callback
@@ -63,14 +73,17 @@ static libtrace_packet_t* packet_cb(libtrace_t *trace, libtrace_thread_t *thread
 {
 	int payloadlen = 0;
 	struct t_store *ts = (struct t_store*)tls;
+	struct libtrace_thread_t *lt = (struct libtrace_thread_t *)thread;
 
 	payloadlen = trace_get_payload_length(packet);
 	
 	ts->pkts++;
 	ts->bytes += payloadlen;
 
-	//XXX; need to pass packet to combiner or reporter thread so it will write it
+	debug(/*"thread #%d:*/ "pkts: %lu, bytes: %lu \n", /*lt->perpkt_num,*/ ts->pkts, ts->bytes);
 
+        // forwarding the packet to the reporter
+        trace_publish_result(trace, thread, 0, (libtrace_generic_t){.pkt = packet}, RESULT_PACKET);
 
 	//by returning NULL we say to libtrace that we are keeping the packet
 	return NULL;
@@ -82,6 +95,8 @@ static libtrace_packet_t* packet_cb(libtrace_t *trace, libtrace_thread_t *thread
 /* Starting callback for the reporter thread */
 static void *start_reporter_cb(libtrace_t *trace, libtrace_thread_t *thread, void *global) 
 {
+	debug("%s()\n", __func__);
+
 	struct r_store *rs = (struct r_store*)malloc(sizeof(struct r_store));
 	if (!rs)
 	{
@@ -94,11 +109,29 @@ static void *start_reporter_cb(libtrace_t *trace, libtrace_thread_t *thread, voi
 }
 
 // The result callback is invoked for each result that reaches the reporter thread
-// (so anytime when someone calls trace_publish_result() ?
+// (so anytime when someone calls trace_publish_result()
 static void result_reporter_cb(libtrace_t *trace, libtrace_thread_t *sender,
         		       void *global, void *tls, libtrace_result_t *result)
 {
 	struct r_store *rs = (struct r_store*)tls;
+	libtrace_packet_t *pkt;
+	int payloadlen = 0;
+
+	debug("%s()\n", __func__);
+
+	pkt = (libtrace_packet_t *)result->value.pkt;
+	if (pkt)
+	{
+		payloadlen = trace_get_payload_length(pkt);
+		rs->pkts++;
+		rs->bytes += payloadlen;
+		debug("pkt in reporter, len: %d, total pkts: %lu, total bytes: %lu \n", 
+			payloadlen, rs->pkts, rs->bytes);
+	}
+	
+	//XXX - implement writing to file
+        if (result->type == RESULT_PACKET)
+                trace_free_packet(trace, result->value.pkt);
 
 }
 
@@ -108,6 +141,7 @@ static void stop_reporter_cb(libtrace_t *trace, libtrace_thread_t *thread,
 {
 	struct r_store *rs = (struct r_store*)tls;
 
+	debug("%s()\n", __func__);
 }
 
 
@@ -149,7 +183,7 @@ int main(int argc, char *argv[])
 		threads_num = atoi(argv[1]);
 	}
 
-	//callback set creation
+	//we create 2 callback sets: for processing and reporter threads
 	processing = trace_create_callback_set();
 	trace_set_starting_cb(processing, start_cb);
 	trace_set_stopping_cb(processing, stop_cb);
@@ -173,11 +207,8 @@ int main(int argc, char *argv[])
 	printf("set %d threads \n", threads_num);
 	trace_set_perpkt_threads(input, threads_num);
 
-	/* We don't care about the order of our results, so we can
-	* use the unordered combiner. */
 	//there are 3 possible combiners: ordered, unordered, sorted. we use ordered.
 	trace_set_combiner(input, &combiner_ordered, (libtrace_generic_t){0});	//XXX - strange syntax
-
 
 	/* Try to balance our load across all processing threads. If
 	we were doing flow analysis, we should use 
@@ -185,11 +216,10 @@ int main(int argc, char *argv[])
 	a given flow end up on the same processing thread. */
 	trace_set_hasher(input, HASHER_BALANCE, NULL, NULL);
 
-
 	/* Start the parallel trace using our callback sets. The NULL 
 	* parameter here is where we can provide global data for the
 	input trace -- we don't need any in this example.
-	Second param is data available for all callbacks 
+	Second param is global data available for all callbacks 
 	Third param - callback set for processing threads
 	Fourth param - callback set for reporter thread */
 	if (trace_pstart(input, NULL, processing, reporter)) 
