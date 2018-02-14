@@ -1,5 +1,5 @@
 //gcc main.c -o tracepulse -ltrace && ./tracepulse
-//gcc main.c -o tracepulse -ltrace && sudo ./tracepulse 4
+//gcc main.c -o tracepulse -ltrace -I/mnt/raw/gdwk/libtrace/ && sudo ./tracepulse 4
 
 //combiner: we use combiner_ordered. so output data stored in ordered way.
 //	    there are 3 combiner types: ordered, unordered, sorted.
@@ -11,7 +11,10 @@
 #include <string.h>
 
 #include <libtrace_parallel.h>	//resides just in /usr/local/include
+#include "lib/libtrace_int.h"	//present only in libtrace sources
+#include "config.h"		//required by libtrace_int.h
 
+#define O_FILENAME "erf:pkts.erf"
 #define DEBUG
 
 #ifdef DEBUG
@@ -34,7 +37,11 @@ struct r_store
 {
 	uint64_t pkts;		//received packets
 	uint64_t bytes;		//received bytes
+	libtrace_out_t *output; //output descriptor
 };
+
+static int compress_level = -1;
+static trace_option_compresstype_t compress_type = TRACE_OPTION_COMPRESSTYPE_NONE;
 
 
 // PROCESSING THREADS CALLBACKS
@@ -73,14 +80,15 @@ static libtrace_packet_t* packet_cb(libtrace_t *trace, libtrace_thread_t *thread
 {
 	int payloadlen = 0;
 	struct t_store *ts = (struct t_store*)tls;
-	struct libtrace_thread_t *lt = (struct libtrace_thread_t *)thread;
+	libtrace_thread_t *lt = (libtrace_thread_t *)thread;
+	int thread_num = lt->perpkt_num;
 
 	payloadlen = trace_get_payload_length(packet);
 	
 	ts->pkts++;
 	ts->bytes += payloadlen;
 
-	debug(/*"thread #%d:*/ "pkts: %lu, bytes: %lu \n", /*lt->perpkt_num,*/ ts->pkts, ts->bytes);
+	debug("thread #%d: len: %d, pkts: %lu, bytes: %lu \n", thread_num, payloadlen, ts->pkts, ts->bytes);
 
         // forwarding the packet to the reporter
         trace_publish_result(trace, thread, 0, (libtrace_generic_t){.pkt = packet}, RESULT_PACKET);
@@ -97,6 +105,7 @@ static void *start_reporter_cb(libtrace_t *trace, libtrace_thread_t *thread, voi
 {
 	debug("%s()\n", __func__);
 
+	char uri[512] = {0};
 	struct r_store *rs = (struct r_store*)malloc(sizeof(struct r_store));
 	if (!rs)
 	{
@@ -104,6 +113,37 @@ static void *start_reporter_cb(libtrace_t *trace, libtrace_thread_t *thread, voi
 		return NULL;
 	}
 	memset(rs, 0x0, sizeof(struct r_store));
+
+	//create output --------------------
+	strcpy(uri, O_FILENAME); 
+
+	rs->output = trace_create_output(uri);
+	if (trace_is_err_output(rs->output)) 
+	{
+		trace_perror_output(rs->output, "%s", uri);
+		return NULL;
+	}
+	if (compress_level != -1) 
+	{
+		if (trace_config_output(rs->output, TRACE_OPTION_OUTPUT_COMPRESS,
+					&compress_level)==-1) 
+		{
+			trace_perror_output(rs->output, "Unable to set compression level");
+		}
+	}
+
+	if (trace_config_output(rs->output, TRACE_OPTION_OUTPUT_COMPRESSTYPE,
+				&compress_type) == -1) 
+	{
+		trace_perror_output(rs->output, "Unable to set compression type");
+	}
+
+	trace_start_output(rs->output);
+	if (trace_is_err_output(rs->output)) 
+	{
+		trace_perror_output(rs->output, "%s", uri);
+		return NULL;
+	}
 
 	return rs;
 }
@@ -125,14 +165,18 @@ static void result_reporter_cb(libtrace_t *trace, libtrace_thread_t *sender,
 		payloadlen = trace_get_payload_length(pkt);
 		rs->pkts++;
 		rs->bytes += payloadlen;
-		debug("pkt in reporter, len: %d, total pkts: %lu, total bytes: %lu \n", 
-			payloadlen, rs->pkts, rs->bytes);
-	}
-	
-	//XXX - implement writing to file
-        if (result->type == RESULT_PACKET)
-                trace_free_packet(trace, result->value.pkt);
+		debug("pkt in reporter from t #: %d, len: %d, total pkts: %lu, total bytes: %lu \n", 
+			sender->perpkt_num, payloadlen, rs->pkts, rs->bytes);
 
+		//writing to file
+		if (result->type == RESULT_PACKET)
+		{
+			/* Write the packet to disk */                                                                                 
+			trace_write_packet(rs->output, pkt);
+
+			trace_free_packet(trace, pkt);
+		}
+	}
 }
 
 //called once in the end for reporter thread?
@@ -142,8 +186,9 @@ static void stop_reporter_cb(libtrace_t *trace, libtrace_thread_t *thread,
 	struct r_store *rs = (struct r_store*)tls;
 
 	debug("%s()\n", __func__);
-}
 
+	trace_destroy_output(rs->output);
+}
 
 // -----------------------------------------------------------------------------
 int init()
@@ -168,6 +213,13 @@ int scrot()
 	return rv;
 }
 
+//add this to Ctrl-C signal processing
+void sigterminating(void *arg)
+{
+	libtrace_t *input = (libtrace_t*)arg;
+
+	trace_pstop(input);
+}
 
 int main(int argc, char *argv[])
 {
@@ -208,7 +260,7 @@ int main(int argc, char *argv[])
 	trace_set_perpkt_threads(input, threads_num);
 
 	//there are 3 possible combiners: ordered, unordered, sorted. we use ordered.
-	trace_set_combiner(input, &combiner_ordered, (libtrace_generic_t){0});	//XXX - strange syntax
+	trace_set_combiner(input, &combiner_unordered, (libtrace_generic_t){0});	//XXX - strange syntax
 
 	/* Try to balance our load across all processing threads. If
 	we were doing flow analysis, we should use 
