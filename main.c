@@ -1,5 +1,7 @@
 //gcc main.c -o tracepulse -ltrace && ./tracepulse
 //gcc main.c -o tracepulse -ltrace -I/mnt/raw/gdwk/libtrace/ && sudo ./tracepulse 4
+//sudo ./tracepulse 4 ring:eth0 erf:1.erf
+//tracepulse 4 odp:"01:00.1" erf:trace.erf.gz
 
 //combiner: we use combiner_ordered. so output data stored in ordered way.
 //	    there are 3 combiner types: ordered, unordered, sorted.
@@ -14,7 +16,7 @@
 #include "lib/libtrace_int.h"	//present only in libtrace sources
 #include "config.h"		//required by libtrace_int.h
 
-#define O_FILENAME "erf:pkts.erf"
+//#define O_FILENAME "erf:pkts.erf"
 #define DEBUG
 
 #ifdef DEBUG
@@ -40,6 +42,8 @@ struct r_store
 	libtrace_out_t *output; //output descriptor
 };
 
+char in_uri[512] = {0};
+char out_uri[512] = {0};
 static int compress_level = -1;
 static trace_option_compresstype_t compress_type = TRACE_OPTION_COMPRESSTYPE_NONE;
 
@@ -105,7 +109,7 @@ static void *start_reporter_cb(libtrace_t *trace, libtrace_thread_t *thread, voi
 {
 	debug("%s()\n", __func__);
 
-	char uri[512] = {0};
+	//char uri[512] = {0};
 	struct r_store *rs = (struct r_store*)malloc(sizeof(struct r_store));
 	if (!rs)
 	{
@@ -115,12 +119,12 @@ static void *start_reporter_cb(libtrace_t *trace, libtrace_thread_t *thread, voi
 	memset(rs, 0x0, sizeof(struct r_store));
 
 	//create output --------------------
-	strcpy(uri, O_FILENAME); 
+	//strcpy(uri, O_FILENAME); 
 
-	rs->output = trace_create_output(uri);
+	rs->output = trace_create_output(out_uri);
 	if (trace_is_err_output(rs->output)) 
 	{
-		trace_perror_output(rs->output, "%s", uri);
+		trace_perror_output(rs->output, "%s", out_uri);
 		return NULL;
 	}
 	if (compress_level != -1) 
@@ -141,7 +145,7 @@ static void *start_reporter_cb(libtrace_t *trace, libtrace_thread_t *thread, voi
 	trace_start_output(rs->output);
 	if (trace_is_err_output(rs->output)) 
 	{
-		trace_perror_output(rs->output, "%s", uri);
+		trace_perror_output(rs->output, "%s", out_uri);
 		return NULL;
 	}
 
@@ -226,13 +230,20 @@ int main(int argc, char *argv[])
 	int rv = 0;
 	int threads_num = 1;		//1 thread by default
 	libtrace_t *input;
-	char *uri = "ring:eth0";	//XXX - why ring?
+	char *def_uri = "ring:eth0";	//default uri
 	libtrace_callback_set_t *processing = NULL, *reporter = NULL;
 
 	//rv = init();
-	if (argc > 1)
+	if (argc != 4)
+	{
+		printf("syntax is: num_treads INPUT OUTPUT\n");
+		exit(1);
+	}
+	else
 	{
 		threads_num = atoi(argv[1]);
+		strcpy(in_uri, argv[2]);
+		strcpy(out_uri, argv[3]);
 	}
 
 	//we create 2 callback sets: for processing and reporter threads
@@ -247,7 +258,7 @@ int main(int argc, char *argv[])
 	trace_set_result_cb(reporter, result_reporter_cb);
 
 	/* Create the input trace object */
-	input = trace_create(uri);
+	input = trace_create(in_uri);
 	if (trace_is_err(input)) 
 	{
 		trace_perror(input, "error creating trace");
