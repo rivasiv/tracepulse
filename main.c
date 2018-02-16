@@ -15,6 +15,7 @@
 #include <libtrace_parallel.h>	//resides just in /usr/local/include
 #include "lib/libtrace_int.h"	//present only in libtrace sources
 #include "config.h"		//required by libtrace_int.h
+#include <signal.h>
 
 //#define O_FILENAME "erf:pkts.erf"
 #define DEBUG
@@ -42,6 +43,7 @@ struct r_store
 	libtrace_out_t *output; //output descriptor
 };
 
+struct sigaction sigact;
 char in_uri[512] = {0};
 char out_uri[512] = {0};
 static int compress_level = -1;
@@ -107,7 +109,7 @@ static libtrace_packet_t* packet_cb(libtrace_t *trace, libtrace_thread_t *thread
 /* Starting callback for the reporter thread */
 static void *start_reporter_cb(libtrace_t *trace, libtrace_thread_t *thread, void *global) 
 {
-	debug("%s()\n", __func__);
+	debug("%s(): enter\n", __func__);
 
 	//char uri[512] = {0};
 	struct r_store *rs = (struct r_store*)malloc(sizeof(struct r_store));
@@ -148,6 +150,8 @@ static void *start_reporter_cb(libtrace_t *trace, libtrace_thread_t *thread, voi
 		trace_perror_output(rs->output, "%s", out_uri);
 		return NULL;
 	}
+
+	debug("%s(): exit\n", __func__);
 
 	return rs;
 }
@@ -225,6 +229,12 @@ void sigterminating(void *arg)
 	trace_pstop(input);
 }
 
+static void signal_handler(int sig)
+{
+    if (sig == SIGUSR1) 
+	printf("Caught signal SIGUSR1 !\n");
+}
+
 int main(int argc, char *argv[])
 {
 	int rv = 0;
@@ -245,6 +255,12 @@ int main(int argc, char *argv[])
 		strcpy(in_uri, argv[2]);
 		strcpy(out_uri, argv[3]);
 	}
+
+	//signal handling
+	sigact.sa_handler = signal_handler;
+	sigemptyset(&sigact.sa_mask);
+	sigact.sa_flags = 0;
+	sigaction(SIGUSR1, &sigact, (struct sigaction *)NULL);
 
 	//we create 2 callback sets: for processing and reporter threads
 	processing = trace_create_callback_set();
