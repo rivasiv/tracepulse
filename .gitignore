@@ -1,3 +1,6 @@
 tracepulse
+odpulse
+core_*
+*.erf.gz
 *.sw?
 *.erf

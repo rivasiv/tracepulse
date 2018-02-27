@@ -1,3 +1,4 @@
+//gcc main.c -o tracepulse -ltrace -I/root/libtrace/
 //gcc main.c -o tracepulse -ltrace && ./tracepulse
 //gcc main.c -o tracepulse -ltrace -I/mnt/raw/gdwk/libtrace/ && sudo ./tracepulse 4
 //sudo ./tracepulse 4 ring:eth0 erf:1.erf
@@ -233,6 +234,8 @@ static void signal_handler(int sig)
 {
     if (sig == SIGUSR1) 
 	printf("Caught signal SIGUSR1 !\n");
+    else if (sig == SIGUSR2)
+	printf("Caught signal SIGUSR2 !\n");
 }
 
 int main(int argc, char *argv[])
@@ -293,6 +296,7 @@ int main(int argc, char *argv[])
 	we were doing flow analysis, we should use 
 	HASHER_BIDIRECTIONAL instead to ensure that all packets for
 	a given flow end up on the same processing thread. */
+
 	trace_set_hasher(input, HASHER_BALANCE, NULL, NULL);
 
 	/* Start the parallel trace using our callback sets. The NULL 
