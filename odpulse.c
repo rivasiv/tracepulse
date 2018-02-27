@@ -7,7 +7,7 @@
 #define SHM_PKT_POOL_SIZE      (512*2048)
 #define SHM_PKT_POOL_BUF_SIZE  1856
 
-#define NUM_THREADS 1
+#define NUM_THREADS 4
 
 odp_instance_t odp_instance;
 odp_pool_param_t params;
@@ -20,10 +20,15 @@ pthread_t thread[NUM_THREADS] = {0};
 
 static void* thread_func(void *arg)
 {
+	int rv;
 	odp_event_t ev;
 	odp_packet_t pkt;
 	int pkt_len;
 	unsigned long pkts_cnt = 0;
+	int *p = (int*)arg;
+	int thread_id = *p;
+
+	rv = odp_init_local(odp_instance, ODP_THREAD_WORKER);
 
 	while (1)
         {
@@ -36,8 +41,10 @@ static void* thread_func(void *arg)
 		if (pkt_len)
 		{
 			pkts_cnt++;
-			printf("len: %d, total pkts: %lu \n", pkt_len, pkts_cnt);
+			printf("#%d: len: %d, total pkts: %lu \n",
+				thread_id, pkt_len, pkts_cnt);
 		}
+		odp_packet_free(pkt);
 	}
 }
 
@@ -80,7 +87,7 @@ int main(int argc, char *argv[])
 	printf("odp init result: %d \n", rv);
 
 	for (i = 0; i < NUM_THREADS; i++)
-		rv = pthread_create(&thread[i], NULL, thread_func, NULL);
+		rv = pthread_create(&thread[i], NULL, thread_func, &i);
 
 	while(1)
 		sleep(1);
