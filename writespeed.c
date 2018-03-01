@@ -7,7 +7,9 @@
 #include <string.h>
 
 #define BUFFERS_NUM 100
-#define BUF_LEN 64
+#define BUF_LEN 1024*1024
+
+int d[BUFFERS_NUM][BUF_LEN] = {0};
 
 int main(int argc, char *argv[])
 {
@@ -15,7 +17,6 @@ int main(int argc, char *argv[])
 	int i, j;
 	int fd = 0;
 	char fname[512] = {0};
-	int d[BUFFERS_NUM][BUF_LEN] = {0};
 
 	if (argc < 2)
 	{
