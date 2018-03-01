@@ -8,6 +8,7 @@
 #define SHM_PKT_POOL_BUF_SIZE  1856
 
 #define NUM_THREADS 4
+#define NUM_INPUT_Q 4
 
 odp_instance_t odp_instance;
 odp_pool_param_t params;
@@ -24,9 +25,12 @@ static void* thread_func(void *arg)
 	odp_event_t ev;
 	odp_packet_t pkt;
 	int pkt_len;
-	unsigned long pkts_cnt = 0;
+	unsigned long old_pkts_cnt = 0, pkts_cnt = 0, pkts_diff = 0;
+	unsigned long old_bytes_cnt = 0, bytes_cnt = 0;
+	double mps = 0.0f;
 	int *p = (int*)arg;
 	int thread_id = *p;
+	time_t now, old = 0;
 
 	rv = odp_init_local(odp_instance, ODP_THREAD_WORKER);
 
@@ -41,8 +45,23 @@ static void* thread_func(void *arg)
 		if (pkt_len)
 		{
 			pkts_cnt++;
-			printf("#%d: len: %d, total pkts: %lu \n",
-				thread_id, pkt_len, pkts_cnt);
+			bytes_cnt += pkt_len;
+			now = time(0);
+			if (now > old)
+			{
+				//pkts_diff = pkts_cnt - old_pkts_cnt;
+				//printf("pkts_diff: %lu \n", pkts_diff);
+				mps = (double)(pkts_cnt - old_pkts_cnt);
+				//printf("mps: %f \n", mps);
+				mps = mps/(1000*1000);
+				printf("#%d: total pkts: %lu , Mp/s: %f, Mb: %lu, Mb/s: %lu\n",
+					thread_id, pkts_cnt, mps,
+					bytes_cnt/(1024*1024), 
+					(bytes_cnt - old_bytes_cnt)/(1024*1024));
+				old = now;
+				old_bytes_cnt = bytes_cnt;
+				old_pkts_cnt = pkts_cnt;
+			}
 		}
 		odp_packet_free(pkt);
 	}
@@ -76,7 +95,7 @@ int main(int argc, char *argv[])
 	odp_pktin_queue_param_init(&pktin_param);
 	pktin_param.op_mode     = ODP_PKTIO_OP_MT;
 	pktin_param.hash_enable = 0;
-	pktin_param.num_queues  = 1;
+	pktin_param.num_queues  = NUM_INPUT_Q;
 	pktin_param.queue_param.sched.sync = ODP_SCHED_SYNC_ATOMIC;
 	pktin_param.queue_param.sched.prio = ODP_SCHED_PRIO_DEFAULT;
 	odp_pktin_queue_config(pktio, &pktin_param);
