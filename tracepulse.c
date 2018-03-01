@@ -1,6 +1,6 @@
-//gcc main.c -o tracepulse -ltrace -I/root/libtrace/
-//gcc main.c -o tracepulse -ltrace && ./tracepulse
-//gcc main.c -o tracepulse -ltrace -I/mnt/raw/gdwk/libtrace/ && sudo ./tracepulse 4
+//gcc tracepulse.c -o tracepulse -ltrace -I/root/libtrace/
+//gcc tracepulse.c -o tracepulse -ltrace && ./tracepulse
+//gcc tracepulse.c -o tracepulse -ltrace -I/mnt/raw/gdwk/libtrace/ && sudo ./tracepulse 4
 //sudo ./tracepulse 4 ring:eth0 erf:1.erf
 //tracepulse 4 odp:"01:00.1" erf:trace.erf.gz
 
@@ -19,7 +19,7 @@
 #include <signal.h>
 
 //#define O_FILENAME "erf:pkts.erf"
-#define DEBUG
+//#define DEBUG
 
 #ifdef DEBUG
  #define debug(x...) printf(x)
@@ -158,7 +158,7 @@ static void *start_reporter_cb(libtrace_t *trace, libtrace_thread_t *thread, voi
 }
 
 // The result callback is invoked for each result that reaches the reporter thread
-// (so anytime when someone calls trace_publish_result()
+// (so anytime when someone calls trace_publish_result())
 static void result_reporter_cb(libtrace_t *trace, libtrace_thread_t *sender,
         		       void *global, void *tls, libtrace_result_t *result)
 {
@@ -180,7 +180,7 @@ static void result_reporter_cb(libtrace_t *trace, libtrace_thread_t *sender,
 		//writing to file
 		if (result->type == RESULT_PACKET)
 		{
-			/* Write the packet to disk */                                                                                 
+			/* Write the packet to disk */
 			trace_write_packet(rs->output, pkt);
 
 			trace_free_packet(trace, pkt);
