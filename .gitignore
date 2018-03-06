@@ -1,5 +1,6 @@
 tracepulse
 odpulse
+writespeed
 core_*
 *.erf.gz
 *.sw?
