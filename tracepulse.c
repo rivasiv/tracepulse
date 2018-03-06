@@ -1,4 +1,4 @@
-//gcc tracepulse.c -o tracepulse -ltrace -I/root/libtrace/
+//gcc tracepulse.c -g -o tracepulse -ltrace -I/root/libtrace/
 //gcc tracepulse.c -o tracepulse -ltrace && ./tracepulse
 //gcc tracepulse.c -o tracepulse -ltrace -I/mnt/raw/gdwk/libtrace/ && sudo ./tracepulse 4
 //sudo ./tracepulse 4 ring:eth0 erf:1.erf
@@ -288,6 +288,9 @@ int main(int argc, char *argv[])
 	If not set, libtrace will create one thread for each core it detects on your system. */
 	printf("set %d threads \n", threads_num);
 	trace_set_perpkt_threads(input, threads_num);
+
+	/* Send every result to the reporter immediately, i.e. do not buffer them. */
+        trace_set_reporter_thold(input, 1);
 
 	//there are 3 possible combiners: ordered, unordered, sorted. we use ordered.
 	trace_set_combiner(input, &combiner_unordered, (libtrace_generic_t){0});	//XXX - strange syntax
