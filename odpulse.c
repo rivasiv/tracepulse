@@ -13,11 +13,12 @@
 #define SHM_PKT_POOL_SIZE      (512*2048)
 #define SHM_PKT_POOL_BUF_SIZE  1856
 
+#define VERSION "1.03"
+
 #define NUM_THREADS 4
 #define NUM_INPUT_Q 4
 
-
-#define BUFFER_SIZE 1024*1024
+#define BUFFER_SIZE 1024*1024*1
 #define MAX_PACKET_SIZE 1600
 
 
@@ -82,6 +83,7 @@ static void* thread_func(void *arg)
 			if (position < BUFFER_SIZE-MAX_PACKET_SIZE)
 			{
 				memcpy(buf+position, odp_packet_l2_ptr(pkt, NULL), pkt_len);
+				odp_schedule_release_atomic();
 				position += pkt_len;
 			}
 			if (position >= BUFFER_SIZE-MAX_PACKET_SIZE)
@@ -122,6 +124,8 @@ int main(int argc, char *argv[])
 	int rv = 0;
 	char devname[] = "1";
 	int i;
+
+	printf("version: %s\n", VERSION);
 
 	rv = odp_init_global(&odp_instance, NULL, NULL);
 	if (rv) exit(1);
