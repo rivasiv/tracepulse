@@ -13,13 +13,15 @@
 #define SHM_PKT_POOL_SIZE      (512*2048)
 #define SHM_PKT_POOL_BUF_SIZE  1856
 
-#define VERSION "1.03"
+#define BUFFER_SIZE 1024*1024*1
+#define MAX_PACKET_SIZE 1600
+
+#define VERSION "1.04"
 
 #define NUM_THREADS 4
 #define NUM_INPUT_Q 4
 
-#define BUFFER_SIZE 1024*1024*1
-#define MAX_PACKET_SIZE 1600
+//#define FILE_SAVING
 
 
 
@@ -45,6 +47,7 @@ static void* thread_func(void *arg)
 	int thread_id = *p;
 	time_t now, old = 0;
 
+#ifdef FILE_SAVING
 	int fd;
 	char fname[256] = {0};
 	unsigned char *buf = NULL;
@@ -58,12 +61,13 @@ static void* thread_func(void *arg)
 		printf("failed to create file. exiting from thread\n");
 		return;
 	}
-
+#endif
 	printf("init odp thread\n");
 	rv = odp_init_local(odp_instance, ODP_THREAD_WORKER);
 
 	while (1)
         {
+#ifdef FILE_SAVING
 		if (!buf)
 			buf = malloc(BUFFER_SIZE);
 		if (!buf)
@@ -71,7 +75,7 @@ static void* thread_func(void *arg)
 			printf("failed to allocate ram. exiting from thread\n");
 			return;
 		}
-
+#endif
 		ev = odp_schedule(NULL, ODP_SCHED_NO_WAIT);
 		pkt = odp_packet_from_event(ev);
 		if (!odp_packet_is_valid(pkt))
@@ -80,6 +84,7 @@ static void* thread_func(void *arg)
 		pkt_len = (int)odp_packet_len(pkt);
 		if (pkt_len)
 		{
+#ifdef FILE_SAVING
 			if (position < BUFFER_SIZE-MAX_PACKET_SIZE)
 			{
 				memcpy(buf+position, odp_packet_l2_ptr(pkt, NULL), pkt_len);
@@ -95,6 +100,7 @@ static void* thread_func(void *arg)
 				buf = NULL;
 				position = 0;
 			}
+#endif
 			
 			pkts_cnt++;
 			bytes_cnt += pkt_len;
