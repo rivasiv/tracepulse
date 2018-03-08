@@ -16,14 +16,18 @@
 #define BUFFER_SIZE 1024*1024*1
 #define MAX_PACKET_SIZE 1600
 
-#define VERSION "1.04"
+#define VERSION "1.06"
 
+//OPTIONS
 #define NUM_THREADS 4
 #define NUM_INPUT_Q 4
+#define FILE_SAVING
+//#define MODE_SCHED
+#define MODE_QUEUE
 
-//#define FILE_SAVING
-
-
+#ifdef MODE_SCHED
+	#undef MODE_QUEUE
+#endif
 
 odp_instance_t odp_instance;
 odp_pool_param_t params;
@@ -31,8 +35,10 @@ odp_pool_t pool;
 odp_pktio_param_t pktio_param;
 odp_pktio_t pktio;
 odp_pktin_queue_param_t pktin_param;
+odp_queue_t inq[NUM_INPUT_Q] = {0};	//keep handles to queues here
 
 pthread_t thread[NUM_THREADS] = {0};
+int thread_num[NUM_THREADS] = {0};
 
 static void* thread_func(void *arg)
 {
@@ -46,7 +52,8 @@ static void* thread_func(void *arg)
 	int *p = (int*)arg;
 	int thread_id = *p;
 	time_t now, old = 0;
-
+#ifdef MODE_QUEUE
+#endif
 #ifdef FILE_SAVING
 	int fd;
 	char fname[256] = {0};
@@ -76,7 +83,12 @@ static void* thread_func(void *arg)
 			return;
 		}
 #endif
+
+#ifdef MODE_QUEUE
+		ev = odp_queue_deq(inq[thread_id]);
+#elif defined MODE_SCHED
 		ev = odp_schedule(NULL, ODP_SCHED_NO_WAIT);
+#endif
 		pkt = odp_packet_from_event(ev);
 		if (!odp_packet_is_valid(pkt))
 			continue;
@@ -147,8 +159,13 @@ int main(int argc, char *argv[])
 	if (pool == ODP_POOL_INVALID) exit(1);
 
 	odp_pktio_param_init(&pktio_param);
+#ifdef MODE_SCHED
 	pktio_param.in_mode = ODP_PKTIN_MODE_SCHED;
-
+	printf("setting sched mode\n");
+#elif defined MODE_QUEUE
+	pktio_param.in_mode = ODP_PKTIN_MODE_QUEUE;
+	printf("setting queue mode\n");
+#endif
 	pktio = odp_pktio_open(devname, pool, &pktio_param);
 	if (pktio == ODP_PKTIO_INVALID) exit(1);
 
@@ -156,17 +173,25 @@ int main(int argc, char *argv[])
 	pktin_param.op_mode     = ODP_PKTIO_OP_MT;
 	pktin_param.hash_enable = 1;
 	pktin_param.num_queues  = NUM_INPUT_Q;
+#ifdef MODE_SCHED
 	pktin_param.queue_param.sched.sync = ODP_SCHED_SYNC_ATOMIC;
 	pktin_param.queue_param.sched.prio = ODP_SCHED_PRIO_DEFAULT;
+#endif
 	odp_pktin_queue_config(pktio, &pktin_param);
 	odp_pktout_queue_config(pktio, NULL);
 	rv = odp_pktio_start(pktio);
 	if (rv) exit(1);
 
 	printf("odp init result: %d \n", rv);
-
+#ifdef MODE_QUEUE
+	rv = odp_pktin_event_queue(pktio, inq, NUM_INPUT_Q);
+	printf("num of input queues configured: %d \n", rv);
+#endif
 	for (i = 0; i < NUM_THREADS; i++)
-		rv = pthread_create(&thread[i], NULL, thread_func, &i);
+	{
+                thread_num[i] = i;
+                rv = pthread_create(&thread[i], NULL, thread_func, &thread_num[i]);
+	}
 
 	while(1)
 		sleep(1);
