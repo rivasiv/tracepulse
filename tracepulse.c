@@ -14,7 +14,7 @@
 #include <string.h>
 
 #include <libtrace_parallel.h>	//resides just in /usr/local/include
-#include "lib/libtrace_int.h"	//present only in libtrace sources
+//#include "lib/libtrace_int.h"	//present only in libtrace sources
 #include "config.h"		//required by libtrace_int.h
 #include <signal.h>
 
@@ -87,8 +87,7 @@ static libtrace_packet_t* packet_cb(libtrace_t *trace, libtrace_thread_t *thread
 {
 	int payloadlen = 0;
 	struct t_store *ts = (struct t_store*)tls;
-	libtrace_thread_t *lt = (libtrace_thread_t *)thread;
-	int thread_num = lt->perpkt_num;
+	int thread_num = trace_get_perpkt_thread_id(thread);
 
 	payloadlen = trace_get_payload_length(packet);
 	
@@ -175,7 +174,7 @@ static void result_reporter_cb(libtrace_t *trace, libtrace_thread_t *sender,
 		rs->pkts++;
 		rs->bytes += payloadlen;
 		debug("pkt in reporter from t #: %d, len: %d, total pkts: %lu, total bytes: %lu \n", 
-			sender->perpkt_num, payloadlen, rs->pkts, rs->bytes);
+			trace_get_perpkt_thread_id(sender), payloadlen, rs->pkts, rs->bytes);
 
 		//writing to file
 		if (result->type == RESULT_PACKET)
@@ -290,7 +289,7 @@ int main(int argc, char *argv[])
 	trace_set_perpkt_threads(input, threads_num);
 
 	/* Send every result to the reporter immediately, i.e. do not buffer them. */
-        trace_set_reporter_thold(input, 1);
+        //trace_set_reporter_thold(input, 1);
 
 	//there are 3 possible combiners: ordered, unordered, sorted. we use ordered.
 	trace_set_combiner(input, &combiner_unordered, (libtrace_generic_t){0});	//XXX - strange syntax
