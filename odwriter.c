@@ -124,7 +124,8 @@ static void* thread_writer(void *arg)
 			free(buffer->buf);
 			free(buffer);
 		}
-		//usleep(1000);		// - just for some case
+		else
+			usleep(1000);		// - just for some case
 	}
 }
 
