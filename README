@@ -1,0 +1,6 @@
+writespeed 	- file writing in few threads at same time
+odpulse	   	- receiving data from odp in few threads, then writing it in few files (with internal speed measure)
+odwriter   	- receiving odp data in few threads, then adding all buffers in single queue, and
+	     	  dequeue from additional writer thread. so we write in single file only
+odnvmepulse	- receiving data from odp in few threads, then writing it in few files with spdk nvme driver 
+

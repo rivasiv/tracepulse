@@ -1,4 +1,5 @@
 //gcc writespeed.c -o writespeed -lpthread
+//file writing in few threads at same time
 
 #include <stdio.h>
 #include <sys/types.h>
