@@ -241,7 +241,7 @@ static void* thread_func(void *arg)
 	if (!fd)
 	{
 		printf("failed to create file. exiting from thread\n");
-		return;
+		return NULL;
 	}
 #endif
 	printf("init odp thread\n");
@@ -252,7 +252,7 @@ static void* thread_func(void *arg)
 	if (!ns_entry)
 	{
 		printf("failed to get ns_entry, exiting...\n");
-		return;
+		return NULL;
 	}
 	memset(&t, 0x0, sizeof(t));
 	//allocate qpair just once per thread
@@ -260,7 +260,7 @@ static void* thread_func(void *arg)
 	if (!t.qpair)
 	{
 		printf("ERROR: spdk_nvme_ctrlr_alloc_io_qpair() failed\n");
-		return;
+		return NULL;
 	}
 
 	while (1)
@@ -278,7 +278,7 @@ static void* thread_func(void *arg)
 			if (t.buf == NULL) 
 			{
 				printf("ERROR: write buffer allocation failed\n");
-				return;
+				return NULL;
 			}
 			t.is_completed = 0;
                 	t.ns_entry = ns_entry;
@@ -313,7 +313,7 @@ static void* thread_func(void *arg)
 				if (rv) 
 				{
 					fprintf(stderr, "starting write I/O failed\n");
-					return;
+					return NULL;
                 		}
 				t.buf = NULL;
 				position = 0;
@@ -325,7 +325,6 @@ static void* thread_func(void *arg)
 				}
 			}
 #endif
-			
 			pkts_cnt++;
 			bytes_cnt += pkt_len;
 			now = time(0);
