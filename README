@@ -3,4 +3,5 @@ odpulse	   	- receiving data from odp in few threads, then writing it in few fil
 odwriter   	- receiving odp data in few threads, then adding all buffers in single queue, and
 	     	  dequeue from additional writer thread. so we write in single file only
 odnvmepulse	- receiving data from odp in few threads, then writing it in few files with spdk nvme driver 
+odnvmepulse17	- same as above, but works with SPDK legacy API from 2017
 
