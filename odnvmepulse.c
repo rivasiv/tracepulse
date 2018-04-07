@@ -147,7 +147,7 @@ static void write_complete(void *arg, const struct spdk_nvme_cpl *completion)
 {
         thread_stor_t *t = arg;
         struct ns_entry *ns_entry = t->ns_entry;
-        int rv;
+        //int rv;
 
         if (t->using_cmb_io) 
 	{
@@ -181,7 +181,7 @@ static void cleanup(void)
         }
 }
 
-int init_spdk()
+int init_spdk(void)
 {
 	int rv = 0;
 
@@ -232,7 +232,6 @@ static void* thread_func(void *arg)
 #ifdef FILE_SAVING
 	int fd;
 	char fname[256] = {0};
-	unsigned char *buf = NULL;
 	unsigned int position = 0;
 
 	sprintf(fname, "%d", thread_id);

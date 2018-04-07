@@ -1,4 +1,4 @@
-//gcc odwriter.c -lodp-linux -lpthread -o odwriter
+//gcc odwriter.c -g -lodp-linux -lpthread -o odwriter
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,7 +16,7 @@
 #define BUFFER_SIZE 1024*1024*1
 #define MAX_PACKET_SIZE 1600
 
-#define VERSION "1.08"
+#define VERSION "1.09"
 
 //OPTIONS
 #define NUM_THREADS 4
@@ -221,10 +221,29 @@ static void* thread_func(void *arg)
 int main(int argc, char *argv[])
 {
 	int rv = 0;
-	char devname[] = "1";
-	int i;
+	char portnum[2] = "0";
+	int i, opt;
 
 	printf("version: %s\n", VERSION);
+
+	while ((opt = getopt(argc, argv, "hp:")) != -1) 
+	{
+		switch (opt) 
+		{
+			case 'h':
+				fprintf(stderr, "Usage: %s [-p port] [-h] help. By default port 0 will be used \n",
+					 argv[0]);
+				exit(EXIT_FAILURE);
+			break;
+			case 'p':
+				strncpy(portnum, optarg, 1);
+			break;
+			default: /* '?' */
+				fprintf(stderr, "Usage: %s [-p port] . By default port 0 will be used \n",
+					 argv[0]);
+				exit(EXIT_FAILURE);
+		}
+	}
 
 	rv = odp_init_global(&odp_instance, NULL, NULL);
 	if (rv) exit(1);
@@ -247,7 +266,7 @@ int main(int argc, char *argv[])
 	pktio_param.in_mode = ODP_PKTIN_MODE_QUEUE;
 	printf("setting queue mode\n");
 #endif
-	pktio = odp_pktio_open(devname, pool, &pktio_param);
+	pktio = odp_pktio_open(portnum, pool, &pktio_param);
 	if (pktio == ODP_PKTIO_INVALID) exit(1);
 
 	odp_pktin_queue_param_init(&pktin_param);
