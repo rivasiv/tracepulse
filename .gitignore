@@ -1,7 +1,10 @@
 tracepulse
 odpulse
 writespeed
+odwriter
 core_*
 *.erf.gz
 *.sw?
 *.erf
+*.o
+*.d
