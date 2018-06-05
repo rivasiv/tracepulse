@@ -19,7 +19,7 @@
 #define BUFFER_SIZE 1024*1024*1
 #define MAX_PACKET_SIZE 1600
 
-#define VERSION "1.10"
+#define VERSION "1.12"
 
 //OPTIONS
 #define NUM_THREADS 4
@@ -27,10 +27,18 @@
 #define FILE_SAVING
 //#define MODE_SCHED
 #define MODE_QUEUE
+//#define DEBUG
 
 #ifdef MODE_SCHED
 	#undef MODE_QUEUE
 #endif
+
+#ifdef DEBUG
+ #define debug(x...) printf(x)
+#else
+ #define debug(x...)
+#endif
+
 
 //spdk stuff -----
 struct ctrlr_entry {
@@ -48,7 +56,7 @@ struct ns_entry {
 typedef struct thread_stor_s {
         struct spdk_nvme_qpair  *qpair;		//qpair is needed for every thread (maybe should be array of qpairs)
 	struct ns_entry *ns_entry;
-        char            *buf;
+        unsigned char   *buf;
         unsigned        using_cmb_io;
         int             is_completed;
 } thread_stor_t;
@@ -69,7 +77,7 @@ odp_queue_t inq[NUM_INPUT_Q] = {0};	//keep handles to queues here
 
 pthread_t thread[NUM_THREADS] = {0};
 int thread_num[NUM_THREADS] = {0};
-
+thread_stor_t thread_stor[NUM_THREADS] = {{0}};
 
 
 int init_spdk(void);
@@ -162,6 +170,8 @@ static void write_complete(void *arg, const struct spdk_nvme_cpl *completion)
                 spdk_dma_free(t->buf);
         }
 	t->is_completed = 1;
+
+	debug("write completed\n");
 }
 
 static void cleanup(void)
@@ -227,7 +237,7 @@ static void* thread_func(void *arg)
 	int thread_id = *p;
 	time_t now, old = 0;
 	//spdk
-	thread_stor_t t;
+	thread_stor_t *t = &thread_stor[thread_id];
 	struct ns_entry *ns_entry;
 
 #ifdef FILE_SAVING
@@ -254,10 +264,10 @@ static void* thread_func(void *arg)
 		printf("failed to get ns_entry, exiting...\n");
 		return NULL;
 	}
-	memset(&t, 0x0, sizeof(t));
+	memset(t, 0x0, sizeof(thread_stor_t));
 	//allocate qpair just once per thread
-	t.qpair = spdk_nvme_ctrlr_alloc_io_qpair(ns_entry->ctrlr, NULL, 0);
-	if (!t.qpair)
+	t->qpair = spdk_nvme_ctrlr_alloc_io_qpair(ns_entry->ctrlr, NULL, 0);
+	if (!t->qpair)
 	{
 		printf("ERROR: spdk_nvme_ctrlr_alloc_io_qpair() failed\n");
 		return NULL;
@@ -266,24 +276,25 @@ static void* thread_func(void *arg)
 	while (1)
         {
 #ifdef FILE_SAVING
-		if (!t.buf)
+		if (!t->buf)
 		{
 			/*
-			t.using_cmb_io = 1;
-			t.buf = spdk_nvme_ctrlr_alloc_cmb_io_buffer(ns_entry->ctrlr, BUFFER_SIZE);
-			if (t.buf == NULL) 
+			t->using_cmb_io = 1;
+			t->buf = spdk_nvme_ctrlr_alloc_cmb_io_buffer(ns_entry->ctrlr, BUFFER_SIZE);
+			if (t->buf == NULL) 
 			{
 			*/
-				t.using_cmb_io = 0;
-				t.buf = spdk_dma_zmalloc(BUFFER_SIZE, 0x1000, NULL);
+			t->using_cmb_io = 0;
+			t->buf = spdk_dma_zmalloc(BUFFER_SIZE, 0x100000, NULL);
+			debug("allocated spdk dma buffer with addr: %p\n", t->buf);
 			//}
-			if (t.buf == NULL) 
+			if (t->buf == NULL) 
 			{
 				printf("ERROR: write buffer allocation failed\n");
 				return NULL;
 			}
-			t.is_completed = 0;
-                	t.ns_entry = ns_entry;
+			t->is_completed = 0;
+                	t->ns_entry = ns_entry;
 		}
 #endif
 
@@ -302,29 +313,32 @@ static void* thread_func(void *arg)
 #ifdef FILE_SAVING
 			if (position < BUFFER_SIZE-MAX_PACKET_SIZE)
 			{
-				memcpy(t.buf+position, odp_packet_l2_ptr(pkt, NULL), pkt_len);
+				//debug("got packet\n");
+				memcpy(t->buf+position, odp_packet_l2_ptr(pkt, NULL), pkt_len);
 				odp_schedule_release_atomic();
 				position += pkt_len;
 			}
 			if (position >= BUFFER_SIZE-MAX_PACKET_SIZE)
 			{
-				rv = spdk_nvme_ns_cmd_write(t.ns_entry->ns, t.qpair, t.buf,
+				rv = spdk_nvme_ns_cmd_write(t->ns_entry->ns, t->qpair, t->buf,
                                             0, /* LBA start */
                                             1, /* number of LBAs 	- XXX check this  */
-                                            write_complete, &t, 0); 	// XXX - allocated on stack address passed
+                                            write_complete, t, 0); 	// XXX - allocated on stack address passed
 				if (rv) 
 				{
 					fprintf(stderr, "starting write I/O failed\n");
 					return NULL;
                 		}
-				t.buf = NULL;
-				position = 0;
+				debug("writed spdk buffer. waiting for completion\n");
 
-				//wait till write will be completed and write_complete() called --XXX waste time here?
-				while (!t.is_completed) 
+				//non-blocking call. calls write_complete()
+				while (!t->is_completed) 
 				{
-					spdk_nvme_qpair_process_completions(t.qpair, 0);
+					spdk_nvme_qpair_process_completions(t->qpair, 0);
 				}
+
+				t->buf = NULL;
+				position = 0;
 			}
 #endif
 			pkts_cnt++;
@@ -349,7 +363,7 @@ static void* thread_func(void *arg)
 		odp_packet_free(pkt);
 	}
 	//never get there
-	spdk_nvme_ctrlr_free_io_qpair(t.qpair);
+	spdk_nvme_ctrlr_free_io_qpair(t->qpair);
 }
 
 int main(int argc, char *argv[])
@@ -395,6 +409,11 @@ int main(int argc, char *argv[])
 #endif
 	odp_pktin_queue_config(pktio, &pktin_param);
 	odp_pktout_queue_config(pktio, NULL);
+
+	//spdk init after odp
+	rv = init_spdk();
+	if (rv) exit(1);
+
 	rv = odp_pktio_start(pktio);
 	if (rv) exit(1);
 
@@ -403,10 +422,6 @@ int main(int argc, char *argv[])
 	rv = odp_pktin_event_queue(pktio, inq, NUM_INPUT_Q);
 	printf("num of input queues configured: %d \n", rv);
 #endif
-
-	//spdk init after odp
-	rv = init_spdk();
-	if (rv) exit(1);
 
 	for (i = 0; i < NUM_THREADS; i++)
 	{
