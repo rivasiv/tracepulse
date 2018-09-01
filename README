@@ -1,7 +1,19 @@
+[TOOLS:]
+--------------------------------------------------------------------------------
 writespeed 	- file writing in few threads at same time
 odpulse	   	- receiving data from odp in few threads, then writing it in few files (with internal speed measure)
 odwriter   	- receiving odp data in few threads, then adding all buffers in single queue, and
 	     	  dequeue from additional writer thread. so we write in single file only
 odnvmepulse	- receiving data from odp in few threads, then writing it in few files with spdk nvme driver 
 odnvmepulse17	- same as above, but works with SPDK legacy API from 2017
+tracepulse	- parallel libtrace input processing
+tracepulspdk	- parallel libtrace input processing with using SPDK as a buffer for storing data
 
+
+
+
+
+use 4.9.X gcc and build tracepulspdk
+-----
+PATH=/opt/rh/devtoolset-3/root/usr/bin:$PATH
+gcc tracepulspdk.c -o tracepulspdk -ltrace -I/root/libtrace/ -I/root/libtrace/lib

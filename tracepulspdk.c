@@ -1,5 +1,5 @@
-//gcc tracepulse.c -g -o tracepulse -ltrace -I/root/libtrace/ -I/root/libtrace/lib
-//gcc tracepulse.c -o tracepulse -ltrace && ./tracepulse
+//gcc tracepulspdk.c -o tracepulspdk -ltrace -I/root/libtrace/ -I/root/libtrace/lib
+
 //gcc tracepulse.c -o tracepulse -ltrace -I/mnt/raw/gdwk/libtrace/ && sudo ./tracepulse 4
 //sudo ./tracepulse 4 ring:eth0 erf:1.erf
 //tracepulse 4 odp:"01:00.1" erf:trace.erf.gz
@@ -12,11 +12,31 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
+#include <stdbool.h>
+#include <stdatomic.h>
+#include <pthread.h>
+
+#include "spdk/stdinc.h"
+#include "spdk/bdev.h"
+#include "spdk/copy_engine.h"
+#include "spdk/conf.h"
+#include "spdk/env.h"
+#include "spdk/io_channel.h"
+#include "spdk/log.h"
+#include "spdk/string.h"
+#include "spdk/queue.h"
+#include "/root/spdk/spdk/lib/bdev/nvme/bdev_nvme.h"
 
 #include <libtrace_parallel.h>	//resides just in /usr/local/include
 #include "lib/libtrace_int.h"	//present only in libtrace sources
 #include "config.h"		//required by libtrace_int.h
-#include <signal.h>
+
+#define NVME_MAX_BDEVS_PER_RPC 32
+#define DEVICE_NAME "s4msung"
+#define NUM_THREADS 4
+#define THREAD_OFFSET 0x100000000	//4Gb of offset for every thread 
+#define THREAD_LIMIT 0x100000000	//space for every thread to write
 
 //#define O_FILENAME "erf:pkts.erf"
 //#define DEBUG
@@ -29,12 +49,9 @@
 
 typedef struct libtrace_thread_t libtrace_thread_t;
 
-//local storage for each processing thread. should be allocated for every thread
-struct t_store
-{
-	uint64_t pkts;		//received packets
-	uint64_t bytes;		//received bytes
-};
+
+
+
 
 //storage for reporter thread (the only one)
 struct r_store
@@ -50,7 +67,15 @@ char out_uri[512] = {0};
 static int compress_level = -1;
 static trace_option_compresstype_t compress_type = TRACE_OPTION_COMPRESSTYPE_NONE;
 
-//------------------------------ spdk ------------------------------------------
+typedef struct global_s
+{
+	char *pci_nvme_addr;
+} global_t;
+
+static global_t global = 
+{
+	.pci_nvme_addr = "0000:02:00.0",
+};
 
 /* Used to pass messages between fio threads */
 struct pls_msg {
@@ -67,6 +92,7 @@ typedef struct pls_target_s
 	TAILQ_ENTRY(pls_target_s) link;
 } pls_target_t;
 
+#if 0
 typedef struct pls_thread_s
 {
 	int idx;
@@ -81,6 +107,7 @@ typedef struct pls_thread_s
 	TAILQ_HEAD(, pls_poller) pollers; /* List of registered pollers on this thread */
 
 } pls_thread_t;
+#endif
 
 /* A polling function */
 struct pls_poller 
@@ -91,10 +118,33 @@ struct pls_poller
 	TAILQ_ENTRY(pls_poller)	link;
 };
 
+//local storage for each processing thread. should be allocated for every thread
+typedef struct pls_thread_s
+{
+	uint64_t pkts;		//received packets
+	uint64_t bytes;		//received bytes
+	int idx;
+	bool read_complete;		//flag, false when read callback not finished, else - tru
+        unsigned char *buf;
+	uint64_t offset;		//just for stats
+	atomic_ulong a_offset;		//atomic offset for id 0 thread
+	pthread_t pthread_desc;
+        struct spdk_thread *thread; /* spdk thread context */
+        struct spdk_ring *ring; /* ring for passing messages to this thread */
+	pls_target_t pls_target;
+	TAILQ_HEAD(, pls_poller) pollers; /* List of registered pollers on this thread */
+} pls_thread_t;
+
 const char *names[NVME_MAX_BDEVS_PER_RPC];
 pls_thread_t pls_ctrl_thread;
 pls_thread_t pls_read_thread;
-pls_thread_t pls_thread[NUM_THREADS];
+//pls_thread_t pls_thread[NUM_THREADS];
+
+static void pls_bdev_init_done(void *cb_arg, int rc)
+{
+	printf("bdev init is done\n");
+	*(bool *)cb_arg = true;
+}
 
 //this callback called when write is completed
 static void pls_bdev_write_done_cb(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
@@ -358,23 +408,25 @@ int init_spdk(void)
 	return rv;
 }
 
-
-
 // PROCESSING THREADS CALLBACKS
 // -----------------------------------------------------------------------------
 //start callback function
 static void* start_cb(libtrace_t *trace, libtrace_thread_t *thread, void *global)
 {
+	int rv;
+	uint64_t offset;
+	uint64_t thread_limit;
+
 	debug("%s(): enter\n", __func__);
 
-	/* Create and initialise a counter struct */
-	struct t_store *ts = (struct t_store*)malloc(sizeof(struct t_store));
-	if (!ts)
+	/* Create and initialize a counter struct */
+	pls_thread_t *t = (pls_thread_t*)malloc(sizeof(pls_thread_t));
+	if (!t)
 	{
 		printf("<error: can't allocate ram for thread storage!>\n");
 		return NULL;
 	}
-	memset(ts, 0x0, sizeof(struct t_store));
+	memset(t, 0x0, sizeof(pls_thread_t));
 
 	//init offset
 	offset = t->idx * THREAD_OFFSET; //each thread has a 4 Gb of space
@@ -433,23 +485,15 @@ static void* start_cb(libtrace_t *trace, libtrace_thread_t *thread, void *global
 
 	printf("spdk thread init done.\n");
 
-
-
-
-
-
-
-
-
-	return ts;
+	return t;
 }
 
 static void stop_cb(libtrace_t *trace, libtrace_thread_t *thread, void *global, void *tls) 
 {
-	struct t_store *ts = (struct t_store*)tls;
+	pls_thread_t *t = (pls_thread_t*)tls;
 	libtrace_generic_t gen;
 
-	gen.ptr = ts;
+	gen.ptr = t;
 	//XXX: 0 - order for result, 0 - no order, but we need to add ordering by timestamp!
 	//could be needed RESULT_PACKET
 	//Inside it calls:
@@ -462,13 +506,14 @@ static libtrace_packet_t* packet_cb(libtrace_t *trace, libtrace_thread_t *thread
 				    void *global, void *tls, libtrace_packet_t *packet)
 {
 	int payloadlen = 0;
-	struct t_store *ts = (struct t_store*)tls;
-	int thread_num = trace_get_perpkt_thread_id(thread);
+	pls_thread_t *t = (pls_thread_t*)tls;
+	//XXX - this function is not exported!
+	//int thread_num = trace_get_perpkt_thread_id(thread);
 
 	payloadlen = trace_get_payload_length(packet);
 	
-	ts->pkts++;
-	ts->bytes += payloadlen;
+	t->pkts++;
+	t->bytes += payloadlen;
 
 	debug("thread #%d: len: %d, pkts: %lu, bytes: %lu \n", thread_num, payloadlen, ts->pkts, ts->bytes);
 
