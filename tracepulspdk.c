@@ -35,6 +35,8 @@
 #define NVME_MAX_BDEVS_PER_RPC 32
 #define DEVICE_NAME "s4msung"
 #define NUM_THREADS 4
+#define BUFFER_SIZE 1048576
+#define EE_HEADER_SIZE 11
 #define THREAD_OFFSET 0x100000000	//4Gb of offset for every thread 
 #define THREAD_LIMIT 0x100000000	//space for every thread to write
 
@@ -92,23 +94,6 @@ typedef struct pls_target_s
 	TAILQ_ENTRY(pls_target_s) link;
 } pls_target_t;
 
-#if 0
-typedef struct pls_thread_s
-{
-	int idx;
-	bool read_complete;		//flag, false when read callback not finished, else - tru
-        unsigned char *buf;
-	uint64_t offset;		//just for stats
-	atomic_ulong a_offset;		//atomic offset for id 0 thread
-	pthread_t pthread_desc;
-        struct spdk_thread *thread; /* spdk thread context */
-        struct spdk_ring *ring; /* ring for passing messages to this thread */
-	pls_target_t pls_target;
-	TAILQ_HEAD(, pls_poller) pollers; /* List of registered pollers on this thread */
-
-} pls_thread_t;
-#endif
-
 /* A polling function */
 struct pls_poller 
 {
@@ -125,7 +110,8 @@ typedef struct pls_thread_s
 	uint64_t bytes;		//received bytes
 	int idx;
 	bool read_complete;		//flag, false when read callback not finished, else - tru
-        unsigned char *buf;
+        unsigned char *buf;		//spdk dma buffer
+	uint64_t position;		//position for buffer
 	uint64_t offset;		//just for stats
 	atomic_ulong a_offset;		//atomic offset for id 0 thread
 	pthread_t pthread_desc;
@@ -139,6 +125,9 @@ const char *names[NVME_MAX_BDEVS_PER_RPC];
 pls_thread_t pls_ctrl_thread;
 pls_thread_t pls_read_thread;
 //pls_thread_t pls_thread[NUM_THREADS];
+
+int init_spdk(void);
+void sigterminating(void *arg);
 
 static void pls_bdev_init_done(void *cb_arg, int rc)
 {
@@ -415,7 +404,7 @@ static void* start_cb(libtrace_t *trace, libtrace_thread_t *thread, void *global
 {
 	int rv;
 	uint64_t offset;
-	uint64_t thread_limit;
+	//uint64_t thread_limit;
 
 	debug("%s(): enter\n", __func__);
 
@@ -431,7 +420,7 @@ static void* start_cb(libtrace_t *trace, libtrace_thread_t *thread, void *global
 	//init offset
 	offset = t->idx * THREAD_OFFSET; //each thread has a 4 Gb of space
 	t->a_offset = offset;
-	thread_limit = offset + THREAD_LIMIT;
+	//thread_limit = offset + THREAD_LIMIT;
 	printf("%s() called from thread #%d. offset: 0x%lx\n", __func__, t->idx, offset);
 
 	t->ring = spdk_ring_create(SPDK_RING_TYPE_MP_SC, 4096, SPDK_ENV_SOCKET_ID_ANY);
@@ -490,10 +479,10 @@ static void* start_cb(libtrace_t *trace, libtrace_thread_t *thread, void *global
 
 static void stop_cb(libtrace_t *trace, libtrace_thread_t *thread, void *global, void *tls) 
 {
-	pls_thread_t *t = (pls_thread_t*)tls;
-	libtrace_generic_t gen;
+	//pls_thread_t *t = (pls_thread_t*)tls;
+	//libtrace_generic_t gen;
 
-	gen.ptr = t;
+	//gen.ptr = t;
 	//XXX: 0 - order for result, 0 - no order, but we need to add ordering by timestamp!
 	//could be needed RESULT_PACKET
 	//Inside it calls:
@@ -506,21 +495,98 @@ static libtrace_packet_t* packet_cb(libtrace_t *trace, libtrace_thread_t *thread
 				    void *global, void *tls, libtrace_packet_t *packet)
 {
 	int payloadlen = 0;
+	unsigned short len;
+	uint64_t nbytes = BUFFER_SIZE;
 	pls_thread_t *t = (pls_thread_t*)tls;
 	//XXX - this function is not exported!
 	//int thread_num = trace_get_perpkt_thread_id(thread);
 
 	payloadlen = trace_get_payload_length(packet);
-	
 	t->pkts++;
 	t->bytes += payloadlen;
 
-	debug("thread #%d: len: %d, pkts: %lu, bytes: %lu \n", thread_num, payloadlen, ts->pkts, ts->bytes);
+	debug("thread #%d: len: %d, pkts: %lu, bytes: %lu \n", 
+		thread_num, payloadlen, ts->pkts, ts->bytes);
+
+	//1. if no buffer - allocate it
+	if (!t->buf)
+	{	//last param - ptr to phys addr(OUT)
+		t->buf = spdk_dma_zmalloc(nbytes, 0x100000, NULL); 
+		if (!t->buf) 
+		{
+			printf("ERROR: write buffer allocation failed\n");
+			return NULL;
+		}
+		debug("allocated spdk dma buffer with addr: %p\n", t->buf);
+	}
+
+	//2. create 0xEE header and copy packet to spdk dma buffer
+	//in position we count num of bytes copied into buffer. 
+	if (payloadlen)
+	{
+		if (t->position + payloadlen + EE_HEADER_SIZE < nbytes)
+		{
+			//debug("copying packet\n");
+			//creating raw format header. 0xEE - magic byte (1byte)
+			t->buf[t->position++] = 0xEE;
+			//timestamp in uint64_t saved as big endian (8bytes)
+			t->buf[t->position++] = time.nsec >> 56 & 0xFF;
+			t->buf[t->position++] = time.nsec >> 48 & 0xFF;
+			t->buf[t->position++] = time.nsec >> 40 & 0xFF;
+			t->buf[t->position++] = time.nsec >> 32 & 0xFF;
+			t->buf[t->position++] = time.nsec >> 24 & 0xFF;
+			t->buf[t->position++] = time.nsec >> 16 & 0xFF;
+			t->buf[t->position++] = time.nsec >> 8 & 0xFF;
+			t->buf[t->position++] = time.nsec & 0xFF;
+			
+			//packet len (2bytes)
+			len = (unsigned short)payloadlen;
+			t->buf[t->position++] = len >> 8;
+			t->buf[t->position++] = len & 0x00FF;
+			//copying libtrace packet 
+			memcpy(t->buf+t->position, packet, payloadlen);
+#ifdef DUMP_PACKET
+			hexdump(t->buf+t->position-EE_HEADER_SIZE , payloadlen+EE_HEADER_SIZE);
+#endif
+			t->position += payloadlen;
+		}
+		else
+		{
+			printf("writing %lu bytes from thread# #%d, offset: 0x%lx\n",
+				nbytes, t->idx, offset);
+			t->offset = offset;
+			t->a_offset = offset;
+			rv = spdk_bdev_write(t->pls_target.desc, t->pls_target.ch, 
+				t->buf, offset, /*position*/ nbytes, pls_bdev_write_done_cb, t);
+			if (rv)
+				printf("#%d spdk_bdev_write failed, offset: 0x%lx, size: %lu\n",
+					t->idx, offset, nbytes);
+
+			offset += nbytes;
+			//offset += position;
+
+			//need to wait for bdev write completion first
+			while(t->buf)
+			{
+				usleep(10);
+			}
+			position = 0;
+
+			//allocate new buffer and place packet to it
+			t->buf = spdk_dma_zmalloc(nbytes, 0x100000, NULL);
+			if (!t->buf) 
+			{
+				printf("ERROR: write buffer allocation failed\n");
+				return NULL;
+			}
+			debug("allocated spdk dma buffer with addr: %p\n", t->buf);
+
+			memcpy(t->buf+position, odp_packet_l2_ptr(pkt, NULL), pkt_len);
+			position += pkt_len;
+		}
 
 
-	//XXX -spdk_bdev_write() here
-
-
+	}
 
         // forwarding the packet to the reporter
         trace_publish_result(trace, thread, 0, (libtrace_generic_t){.pkt = packet}, RESULT_PACKET);
@@ -625,28 +691,6 @@ static void stop_reporter_cb(libtrace_t *trace, libtrace_thread_t *thread,
 }
 
 // -----------------------------------------------------------------------------
-int init()
-{
-	printf("init\n");
-
-	return 0;
-}
-
-int scrot()
-{
-	int rv = 0;
-	char cmd[512] = {0};
-
-/*
-	strcpy(cmd, "scrot ");
-	strcat(cmd, IMG_NAME);
-
-	rv = system(cmd);
-	printf("scrot execution value is: %d\n", rv);
-*/
-	return rv;
-}
-
 //add this to Ctrl-C signal processing
 void sigterminating(void *arg)
 {
@@ -668,10 +712,9 @@ int main(int argc, char *argv[])
 	int rv = 0;
 	int threads_num = 1;		//1 thread by default
 	libtrace_t *input;
-	char *def_uri = "ring:eth0";	//default uri
+	//char *def_uri = "ring:eth0";	//default uri
 	libtrace_callback_set_t *processing = NULL, *reporter = NULL;
 
-	//rv = init();
 	if (argc != 4)
 	{
 		printf("syntax is: num_treads INPUT OUTPUT\n");
