@@ -1,6 +1,22 @@
 [tracepulse]
 
 
+
+[IMPORTANT FACTS:]
+---------------------------------------------------
+- I have packets in reporter thread result callback  not immediately after trace_publish_result()
+ call, but only when we transfer 100 packet from every thread.
+- Both ordered and unordered combiners work.
+- We stop after receiving 256 packets. probably some queue is full and we need to free packets.
+  (need to call trace_free_packet(trace, result->value.pkt) in result callback)
+  So libtrace has some internal queue with size 256 packets.
+- In reporter thread we get packets from combiner thread, not from processing threads, so thread id is always -1.
+- If combiner is 'ordered' - another threads except 0 doesn't send packets to combiner/reporter and stuck at 256.
+  If 'unordered' - we have in reporter sum of packets from all threads.
+  So in case if combiner is 'ordered' we need to provide some info of how to sort packets.
+
+
+
 we need:
 ---------
 - starting callback			- \/
@@ -19,28 +35,14 @@ things to solve:
 - do we need to call trace_publish_result(trace, t, 0, gen, RESULT_PACKET); from every packet 
 callback
 
+
 WORKING MECHANISM:
 -----------
 - start callbacks for processing threads and for reporter thread allocate some internal
 storage with malloc and return pointer to that storage.
+- we forward packets to combiner/reporter in packet_cb() in every processing thread. this is done via 
+trace_publish_result(trace, thread, 0, (libtrace_generic_t){.pkt = packet}, RESULT_PACKET);
 
-
-
-setting callbacks:
--------
-libtrace_callback_set_t *pktcbs, *rescbs;
-
-        pktcbs = trace_create_callback_set();
-        rescbs = trace_create_callback_set();
-
-        trace_set_packet_cb(pktcbs, fn_packet);
-        trace_set_starting_cb(pktcbs, fn_starting);
-        trace_set_stopping_cb(pktcbs, fn_stopping);
-        trace_set_starting_cb(rescbs, fn_starting);
-        trace_set_result_cb(rescbs, fn_result);
-        trace_set_stopping_cb(rescbs, fn_print_results);
-
-	trace_pstart(trace, NULL, pktcbs, rescbs)
 
 
 
@@ -87,4 +89,19 @@ OUTPUT:
                         free(buffer);
                         return -1;
                 }
+
+
+
+do not queue packets in combiner:
+------------------------------------------
+        /* Send every result to the reporter immediately, i.e. do not buffer
+         * them. */
+        trace_set_reporter_thold(trace, 1);
+
+
+
+
+
+
+
 
