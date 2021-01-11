@@ -22,8 +22,8 @@
 #define NUM_THREADS 4
 #define NUM_INPUT_Q 4
 #define FILE_SAVING
-//#define MODE_SCHED
-#define MODE_QUEUE
+#define MODE_SCHED
+//#define MODE_QUEUE
 
 #ifdef MODE_SCHED
 	#undef MODE_QUEUE
@@ -140,7 +140,7 @@ static void* thread_func(void *arg)
 int main(int argc, char *argv[])
 {
 	int rv = 0;
-	char devname[] = "1";
+	char devname[] = "0";
 	int i;
 
 	printf("version: %s\n", VERSION);
@@ -159,8 +159,11 @@ int main(int argc, char *argv[])
 	if (pool == ODP_POOL_INVALID) exit(1);
 
 	odp_pktio_param_init(&pktio_param);
+	odp_sys_info_print();
+
 #ifdef MODE_SCHED
 	pktio_param.in_mode = ODP_PKTIN_MODE_SCHED;
+	odp_schedule_config(NULL);
 	printf("setting sched mode\n");
 #elif defined MODE_QUEUE
 	pktio_param.in_mode = ODP_PKTIN_MODE_QUEUE;
@@ -173,9 +176,13 @@ int main(int argc, char *argv[])
 	pktin_param.op_mode     = ODP_PKTIO_OP_MT;
 	pktin_param.hash_enable = 1;
 	pktin_param.num_queues  = NUM_INPUT_Q;
+
+	odp_pktio_promisc_mode_set (pktio, 1);
+
 #ifdef MODE_SCHED
 	pktin_param.queue_param.sched.sync = ODP_SCHED_SYNC_ATOMIC;
 	pktin_param.queue_param.sched.prio = ODP_SCHED_PRIO_DEFAULT;
+	pktin_param.queue_param.sched.group = ODP_SCHED_GROUP_ALL;
 #endif
 	odp_pktin_queue_config(pktio, &pktin_param);
 	odp_pktout_queue_config(pktio, NULL);
