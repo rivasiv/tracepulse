@@ -32,7 +32,7 @@
 #
 
 #SPDK_ROOT_DIR := $(abspath $(CURDIR)/../../..)
-SPDK_ROOT_DIR := /root/spdk/spdk
+SPDK_ROOT_DIR := /root/spdk
 include $(SPDK_ROOT_DIR)/mk/spdk.common.mk
 
 APP = odnvmepulse17
