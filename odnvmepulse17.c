@@ -1,4 +1,5 @@
-//gcc odnvmepulse.c -lodp-linux -lpthread -o odnvmepulse
+
+//make -f Makefile_odnvmepulse17 
 
 #include <stdio.h>
 #include <stdlib.h>

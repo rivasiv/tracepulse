@@ -2,34 +2,35 @@ SPDK_ROOT_DIR := /root/spdk
 #SPDK_ROOT_DIR := $(abspath $(CURDIR)/../..)
 include $(SPDK_ROOT_DIR)/mk/spdk.common.mk
 include $(SPDK_ROOT_DIR)/mk/spdk.modules.mk
-include $(SPDK_ROOT_DIR)/mk/spdk.app.mk
 
-COMMON_CFLAGS += -I/root/libtrace/ -I/root/libtrace/lib/
+PULSEDEBUG = -g -DDEBUG=1 
+
+COMMON_CFLAGS += $(PULSEDEBUG) -I/root/libtrace/ -I/root/libtrace/lib/
 
 APP = tracepulspdk
 
 C_SRCS := tracepulspdk.c
 
-SPDK_LIB_LIST = event_bdev event_copy event_iscsi event_net event_scsi event_nvmf
-SPDK_LIB_LIST += nvmf event log trace conf util bdev iscsi scsi copy rpc jsonrpc json
-SPDK_LIB_LIST += app_rpc log_rpc bdev_rpc
+SPDK_LIB_LIST = $(ALL_MODULES_LIST)
+SPDK_LIB_LIST += event_bdev event_accel event_nvmf event_net event_vmd
+SPDK_LIB_LIST += nvme bdev_nvme nvmf event log trace conf thread util bdev accel rpc jsonrpc json net sock
+SPDK_LIB_LIST += app_rpc log_rpc bdev_rpc notify
 
-LIBS += $(BLOCKDEV_MODULES_LINKER_ARGS) \
-	$(COPY_MODULES_LINKER_ARGS) \
-	$(NET_MODULES_LINKER_ARGS) \
-	$(SPDK_LIB_LINKER_ARGS) $(ENV_LINKER_ARGS)
-LIBS += -lcrypto -ltrace
+SYS_LIBS += -lcrypto -ltrace
 
-all : $(APP)
-	@:
+ifeq ($(SPDK_ROOT_DIR)/lib/env_dpdk,$(CONFIG_ENV))
+SPDK_LIB_LIST += env_dpdk_rpc
+endif
 
-$(APP) : $(OBJS) $(SPDK_LIB_FILES) $(BLOCKDEV_MODULES_FILES) $(LINKER_MODULES) $(ENV_LIBS)
-	$(LINK_C)
+ifeq ($(OS),Linux)
+SPDK_LIB_LIST += event_nbd nbd
+endif
 
-clean:
-	$(CLEAN_C) $(APP)
+ifeq ($(CONFIG_FC),y)
+ifneq ($(strip $(CONFIG_FC_PATH)),)
+SYS_LIBS += -L$(CONFIG_FC_PATH)
+endif
+SYS_LIBS += -lufc
+endif
 
-install: $(APP)
-	$(INSTALL_APP)
-
-include $(SPDK_ROOT_DIR)/mk/spdk.deps.mk
+include $(SPDK_ROOT_DIR)/mk/spdk.app.mk
